@@ -1,13 +1,15 @@
-# dbt-starrocks
+# dbt-starrocks-droppii
 
-![PyPI](https://img.shields.io/pypi/v/dbt-starrocks)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/dbt-starrocks)
-![PyPI - Downloads](https://img.shields.io/pypi/dw/dbt-starrocks)
+> **Fork notice:** This is a fork of [StarRocks/dbt-starrocks](https://github.com/StarRocks/dbt-starrocks), maintained by Droppii and published as `dbt-starrocks-droppii`. See [CHANGELOG.md](CHANGELOG.md) for fork-specific fixes.
+
+![PyPI](https://img.shields.io/pypi/v/dbt-starrocks-droppii)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/dbt-starrocks-droppii)
+![PyPI - Downloads](https://img.shields.io/pypi/dw/dbt-starrocks-droppii)
 
 This project is **under development**.
 
 
-The `dbt-starrocks` package contains all the code to enable [dbt](https://getdbt.com) to work with [StarRocks](https://www.starrocks.io).
+The `dbt-starrocks-droppii` package contains all the code to enable [dbt](https://getdbt.com) to work with [StarRocks](https://www.starrocks.io).
 
 - Requires StarRocks version 2.5.0 or higher
   - version 3.4.x is recommended
@@ -19,7 +21,7 @@ The `dbt-starrocks` package contains all the code to enable [dbt](https://getdbt
 This plugin can be installed via pip:
 
 ```shell
-$ pip install dbt-starrocks
+$ pip install dbt-starrocks-droppii
 ```
 
 ## Supported features
