@@ -39,9 +39,9 @@ this_directory = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(this_directory, "README.md"), encoding='utf-8') as f:
     long_description = f.read()
 
-package_name = "dbt-starrocks"
+package_name = "dbt-starrocks-droppii"
 # make sure this always matches dbt/adapters/starrocks/__version__.py
-package_version = "1.12.0"
+package_version = "1.12.1"
 description = """The Starrocks adapter plugin for dbt"""
 
 
@@ -53,7 +53,7 @@ setup(
     long_description_content_type="text/markdown",
     author="fujianhj, long2ice, astralidea",
     author_email="fujianhj@gmail.com, long2ice@gmail.com, astralidea@163.com",
-    url="https://github.com/StarRocks/dbt-starrocks/",
+    url="https://github.com/droppii/dbt-starrocks",
     packages=find_namespace_packages(include=['dbt', 'dbt.*']),
     include_package_data=True,
     install_requires=[
