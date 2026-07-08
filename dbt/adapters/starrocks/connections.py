@@ -281,3 +281,26 @@ class StarRocksConnectionManager(SQLConnectionManager):
 
     def add_begin_query(self):
         return self.add_query("", auto_begin=False)
+    
+    def begin(self):
+        """
+        Override BEGIN for StarRocks — skip explicit transactions entirely.
+        """
+        # Do NOT call super().begin() — we don't want to send 'BEGIN' to StarRocks
+        self.transaction_open = False
+        return
+
+    def commit(self):
+        """
+        Override COMMIT for StarRocks — skip committing since no transaction was opened.
+        """
+        # Do nothing — prevents dbt-core from raising 'no transaction open'
+        self.transaction_open = False
+        return
+
+    def rollback(self):
+        """
+        Override ROLLBACK for StarRocks — skip rollback since no transaction was opened.
+        """
+        self.transaction_open = False
+        return

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-07-08
+
+### Fixed
+- Skip explicit `BEGIN`/`COMMIT`/`ROLLBACK` transaction handling in `StarRocksConnectionManager` — StarRocks doesn't support transactions the way dbt-core's default connection manager expects, which caused "no transaction open" errors
+- `--full-refresh` incremental materialization: drop the `__dbt_backup` relation after the table exchange instead of before, avoiding a failure when no backup relation exists yet
+
 ## [1.12.0] - 2026-06-10
 
 ### Added

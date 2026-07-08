@@ -118,13 +118,13 @@
         {#-- First create a backup of the existing table and then exchange the new table with the backup --#}
         {%- set backup_identifier = existing_relation.identifier ~ "__dbt_backup" -%}
         {%- set backup_relation = existing_relation.incorporate(path={"identifier": backup_identifier}) -%}
-        {%- do adapter.drop_relation(backup_relation) -%}
 
         {%- call statement('main') -%}
             {{ starrocks__create_table_as(False, backup_relation, compiled_code, is_external) }}
         {%- endcall -%}
 
         {%- do starrocks__exchange_relation(target_relation, backup_relation) -%}
+        {%- do adapter.drop_relation(backup_relation) -%}
     {% else %}
         {#-- Create the temp relation, either as a view or as a temp table --#}
         {%- call statement('create_tmp_relation') -%}
