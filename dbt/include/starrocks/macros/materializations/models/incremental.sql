@@ -118,6 +118,7 @@
         {#-- First create a backup of the existing table and then exchange the new table with the backup --#}
         {%- set backup_identifier = existing_relation.identifier ~ "__dbt_backup" -%}
         {%- set backup_relation = existing_relation.incorporate(path={"identifier": backup_identifier}) -%}
+        {%- do drop_relation_if_exists(backup_relation) -%}
 
         {%- call statement('main') -%}
             {{ starrocks__create_table_as(False, backup_relation, compiled_code, is_external) }}
