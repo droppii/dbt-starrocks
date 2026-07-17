@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-07-17
+
+### Fixed
+- `--full-refresh` incremental materialization: drop any leftover `__dbt_backup` relation before creating a new backup table, avoiding a failure when a previous run left a stale backup in place
+
 ## [1.12.1] - 2026-07-08
 
 ### Fixed
