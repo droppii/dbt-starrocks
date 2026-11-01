@@ -1,0 +1,87 @@
+{
+  "kind": "repository-execution-profiles",
+  "schemaVersion": 1,
+  "repository": "droppii/dbt-starrocks",
+  "workspace": "checkout/worktree/VM do nền tảng agent quản lý theo công việc",
+  "context": "docs/repository-context.md",
+  "modules": [
+    {
+      "id": "python",
+      "path": ".",
+      "runtime": {
+        "python": "Theo Dockerfile/pyproject/ngữ cảnh module; kiểm AST không chứng minh tương thích runtime ứng dụng",
+        "sources": [
+          "dev_requirements.txt"
+        ]
+      },
+      "dependency": {
+        "requirements": "dev_requirements.txt",
+        "isolatedEnvironment": ".venv của workspace công việc; không cài vào Python hệ thống",
+        "argv": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-r",
+          "dev_requirements.txt"
+        ],
+        "cwd": ".",
+        "limitations": [
+          "Requirements không đồng nghĩa lock transitive; lưu phiên bản đã giải và kiểm lại khi dependency thay đổi."
+        ]
+      }
+    }
+  ],
+  "imageSources": [],
+  "profiles": [
+    {
+      "id": "python-syntax",
+      "kind": "source-check",
+      "purpose": "Phân tích cú pháp Python của .",
+      "cwd": ".",
+      "requiredFiles": [
+        "dbt/adapters/starrocks/__init__.py"
+      ],
+      "patterns": [
+        "dbt/adapters/starrocks/__init__.py",
+        "dbt/adapters/starrocks/__version__.py",
+        "dbt/adapters/starrocks/column.py",
+        "dbt/adapters/starrocks/connections.py",
+        "dbt/adapters/starrocks/impl.py",
+        "dbt/adapters/starrocks/relation.py",
+        "dbt/include/starrocks/__init__.py",
+        "setup.py",
+        "tests/conftest.py",
+        "tests/functional/adapter/test_basic.py",
+        "tests/functional/adapter/test_external.py",
+        "tests/functional/adapter/test_incremental.py",
+        "tests/functional/adapter/test_indexes.py",
+        "tests/functional/adapter/test_key_type_validation.py",
+        "tests/functional/adapter/test_seed_decimal.py",
+        "tests/functional/adapter/test_submit_task.py",
+        "tests/functional/adapter/test_task_cancellation.py",
+        "tests/functional/adapter/test_view_rename.py",
+        "tests/functional/adapter/test_view_skip.py",
+        "tests/unit/test_connections.py",
+        "tests/unit/test_convert_number_type.py",
+        "tests/unit/test_poll_backoff.py",
+        "tests/unit/test_relation_rendering.py",
+        "tests/unit/test_submit_task.py"
+      ],
+      "exclude": [
+        ".claude/*",
+        ".opencode/*",
+        ".agents/*",
+        ".engineering/*",
+        "*node_modules/*",
+        "*__pycache__/*"
+      ],
+      "evidenceKind": "source-validation",
+      "limitations": [
+        "Kiểm tra cấu trúc/cú pháp đầu vào và ghi hash; chưa chạy ứng dụng hoặc kiểm chứng nghiệp vụ.",
+        "Python được phân tích AST; JSON nghiêm ngặt và XML được parse; các file khác chỉ được nhận diện bằng hash."
+      ]
+    }
+  ],
+  "integrationPolicy": "API/database/broker/model/native/cloud cần profile hoặc môi trường thử riêng với đích, quyền, dữ liệu và kiểm chứng cụ thể; không chạy toàn bộ suite hoặc script start/migration/deploy để thử profile."
+}
