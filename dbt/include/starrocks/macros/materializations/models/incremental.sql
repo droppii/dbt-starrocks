@@ -117,8 +117,15 @@
     {%- elif full_refresh_mode -%}
         {#-- First create a backup of the existing table and then exchange the new table with the backup --#}
         {%- set backup_identifier = existing_relation.identifier ~ "__dbt_backup" -%}
+        {%- if target.get('is_async', false) -%}
+            {#-- An interrupted task can still be building a previous invocation's backup. --#}
+            {%- set backup_identifier = existing_relation.identifier[:19] ~ "__dbt_backup_"
+                ~ local_md5(invocation_id ~ ":" ~ model.unique_id) -%}
+        {%- endif -%}
         {%- set backup_relation = existing_relation.incorporate(path={"identifier": backup_identifier}) -%}
-        {%- do drop_relation_if_exists(backup_relation) -%}
+        {%- if not target.get('is_async', false) -%}
+            {%- do drop_relation_if_exists(backup_relation) -%}
+        {%- endif -%}
 
         {%- call statement('main') -%}
             {{ starrocks__create_table_as(False, backup_relation, compiled_code, is_external) }}
