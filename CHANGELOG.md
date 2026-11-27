@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.3] - 2026-11-24
+
+### Fixed
+- Require explicit success after async task submission, retry incomplete status reads with bounded
+  backoff, and isolate incremental full-refresh backup tables by invocation.
+- Record opt-in SQL dispatch evidence so the writer guard can distinguish a startup
+  catalog planner error from a failure that may have written to StarRocks.
+
 ## [1.12.2] - 2026-07-17
 
 ### Fixed

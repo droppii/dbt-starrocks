@@ -12,15 +12,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 import re
 import time
 import uuid
 from concurrent.futures import Future
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, FrozenSet, Tuple
 from typing_extensions import TypeAlias
 
 import agate
 import dbt.exceptions
+from mysql.connector import Error as MySQLError
 from dbt.adapters.base import available
 from dbt.adapters.base.impl import _expect_row_value, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
@@ -45,6 +48,12 @@ SQLQueryResult: TypeAlias = Tuple[AdapterResponse, "agate.Table"]
 
 SUBMIT_TASK_TEMPLATE = "submit /*+set_var(query_timeout={timeout})*/ task {task_id} as {sql}"
 POLL_TASK_TEMPLATE = "select * from information_schema.task_runs where task_name = '{task_id}'"
+MIN_ASYNC_POLL_SECONDS = 1800
+TRANSIENT_MYSQL_CONNECTION_ERRORS = {2002, 2003, 2006, 2013, 2055}
+MV_TASK_STATES = {"MERGED", "SKIPPED"}
+PRIVATE_BACKUP_CTAS = re.compile(
+    r'^\s*create\s+table\s+(?:`[^`]+`\.)*`[^`]*__dbt_backup_[0-9a-f]{32}`(?=\s|\()', re.IGNORECASE
+)
 
 class StarRocksConfig(AdapterConfig):
     engine: Optional[str] = None
@@ -123,68 +132,86 @@ class StarRocksAdapter(SQLAdapter):
         except Exception as e:
             logger.warning(f"Failed to cancel task [{task_id}]: {e}")
 
-    def _poll_for_complete_task(self, task_id: str) -> SQLQueryResult:
-        """
-        Polls for the completion of a task.
+    @staticmethod
+    def _is_transient_poll_error(error: Optional[BaseException]) -> bool:
+        # The driver error is normally wrapped by the dbt connection manager.
+        while error is not None:
+            if isinstance(error, MySQLError) and error.errno in TRANSIENT_MYSQL_CONNECTION_ERRORS:
+                return True
+            message = str(error).lower()
+            if "_statistics_.task_run_history" in message and "repoexecutorexecute sql failed" in message:
+                return True
+            error = error.__cause__ or error.__context__
+        return False
 
-        Task status is retrieved from `information_schema.task_runs`, which exposes
-        runtime metadata for async tasks executed by StarRocks.
-        See: https://docs.starrocks.io/docs/sql-reference/information_schema/task_runs/
+    def _poll_for_complete_task(
+        self, task_id: str, pending_file: Optional[Path] = None, private_backup: bool = False
+    ) -> SQLQueryResult:
+        """Wait for explicit completion of this task before allowing the next statement."""
+        poll_sql = POLL_TASK_TEMPLATE.format(task_id=task_id)
+        connection = self.connections.get_if_exists()
+        credentials = self.config.credentials
+        poll_timeout = max(MIN_ASYNC_POLL_SECONDS, (credentials.async_query_timeout or 0) + 60)
+        deadline = time.monotonic() + poll_timeout
+        attempt = 1
+        detail = "task status unavailable"
 
-        :param task_id: The task ID to poll for.
-        :return: A tuple of the execution status and polling results.
-        """
-        _poll_sql = POLL_TASK_TEMPLATE.format(task_id=task_id)
-        _connection = self.connections.get_if_exists() or self.connections.begin()
-        _attempts = 1
-
-        while True:
-
-            # Open if needed
-            self.connections.open(_connection)
-
-            # Get the status from task_runs
-            response, task_run_status = super().execute(sql=_poll_sql, fetch=True, limit=1)
-            if response.code != 'SUCCESS':
-                logger.error(
-                    f"Error: Could not poll task [{task_id}]. "
-                    f"Reason: failed with response.code: [{response.code}]"
+        while time.monotonic() < deadline:
+            try:
+                self.connections.open(connection)
+                response, rows = super().execute(sql=poll_sql, fetch=True, limit=1)
+            except Exception as error:
+                if not self._is_transient_poll_error(error):
+                    raise dbt.exceptions.DbtRuntimeError(
+                        f"StarRocks task [{task_id}] unresolved: status poll failed: {error}"
+                    ) from error
+                detail = f"transient status poll error: {error}"
+            else:
+                if response.code != "SUCCESS":
+                    raise dbt.exceptions.DbtRuntimeError(
+                        f"StarRocks task [{task_id}] unresolved: poll returned [{response.code}]"
+                    )
+                row = rows[0] if rows else {}
+                status = row.get("STATE")
+                detail = (
+                    f"state={status}, progress={row.get('PROGRESS', 'unknown')}"
+                    if status else "task status missing"
                 )
-                return response, task_run_status
+                if time.monotonic() >= deadline:
+                    break
+                if status in MV_TASK_STATES:
+                    raise dbt.exceptions.DbtRuntimeError(
+                        f"StarRocks task [{task_id}] unresolved: unexpected ETL state [{status}]"
+                    )
+                if status in {"SUCCESS", "FAILED"}:
+                    if pending_file is not None:
+                        pending_file.unlink()
+                    if status == "FAILED":
+                        retry_hint = " (isolated full-refresh backup)" if private_backup else ""
+                        raise dbt.exceptions.DbtRuntimeError(
+                            f"StarRocks task [{task_id}] finished with [{status}]{retry_hint}: "
+                            f"{row.get('ERROR_MESSAGE') or 'no error message'}"
+                        )
+                    logger.info(f"Task [{task_id}] finished with status [{status}]")
+                    return response, rows
 
-            # Check if we got any results
-            if not task_run_status or len(task_run_status) == 0:
-                logger.info(f"Task {task_id} not found. Aborting...")
-                return response, task_run_status
-
-            # Validate status
-            status = task_run_status[0].get("STATE", "unknown")
-            if status == "FAILED":
-                _error_msg = task_run_status[0].get("ERROR_MESSAGE", "")
-                raise dbt.exceptions.DbtRuntimeError(
-                    f"Task [{task_id}] failed with status "
-                    f"[{status}] and error message: {_error_msg}"
-                )
-
-            elif status in ["SUCCESS", "MERGED", "unknown"]:
-                logger.info(f"Task [{task_id}] finished with status [{status}]")
-                return response, task_run_status
-
-            poll_delay = self._compute_poll_delay(
-                _attempts,
-                self.config.credentials.poll_interval,
-                self.config.credentials.poll_factor,
-                self.config.credentials.poll_max_delay,
+            self.connections.close(connection)
+            delay = min(
+                self._compute_poll_delay(
+                    attempt, credentials.poll_interval, credentials.poll_factor, credentials.poll_max_delay
+                ),
+                deadline - time.monotonic(),
             )
-            _attempts += 1
+            if delay <= 0:
+                break
+            logger.info(f"Task [{task_id}] {detail}. Waiting {delay:g} seconds...")
+            time.sleep(delay)
+            attempt += 1
 
-            # Notify end user
-            progress = task_run_status[0].get("PROGRESS", "unknown")
-            logger.info(f"Task {task_id} progress [{progress}]. Waiting {poll_delay} seconds...")
-
-            # Close connection before sleeping to avoid stale connections
-            self.connections.close(_connection)
-            time.sleep(poll_delay)
+        raise dbt.exceptions.DbtRuntimeError(
+            f"StarRocks task [{task_id}] unresolved after {poll_timeout}s: {detail}. "
+            "Check the server-side task before retrying or cleaning up."
+        )
 
     def _execute_async_task(self, sql: str, auto_begin: bool = False, fetch: bool = False, limit: Optional[int] = None) -> SQLQueryResult:
         """
@@ -208,17 +235,29 @@ class StarRocksAdapter(SQLAdapter):
         )
 
         _connection = self.connections.get_if_exists()
+        # A retry in a second dbt process needs evidence even if the first is killed.
+        pending_dir = os.environ.get("DBT_STARROCKS_PENDING_TASK_DIR")
+        pending_file = Path(pending_dir) / _task_id if pending_dir else None
+        if pending_file is not None:
+            pending_file.touch(exist_ok=False)
         if _connection:
             self._running_tasks[_connection.name] = _task_id
 
         try:
-            super().execute(
-                sql=_submit_sql,
-                auto_begin=auto_begin,
-                fetch=fetch,
-                limit=limit
-            )
-            return self._poll_for_complete_task(_task_id)
+            logger.info(f"Submitting StarRocks task [{_task_id}]")
+            try:
+                response, _ = super().execute(
+                    sql=_submit_sql, auto_begin=auto_begin, fetch=fetch, limit=limit
+                )
+            except Exception as error:
+                raise dbt.exceptions.DbtRuntimeError(
+                    f"StarRocks task [{_task_id}] unresolved: submission failed: {error}"
+                ) from error
+            if response.code != "SUCCESS":
+                raise dbt.exceptions.DbtRuntimeError(
+                    f"StarRocks task [{_task_id}] unresolved: submit returned [{response.code}]"
+                )
+            return self._poll_for_complete_task(_task_id, pending_file, bool(PRIVATE_BACKUP_CTAS.match(sql)))
         finally:
             if _connection and _connection.name in self._running_tasks:
                 del self._running_tasks[_connection.name]

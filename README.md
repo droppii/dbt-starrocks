@@ -196,6 +196,23 @@ The polling is implemented using a configurable exponential backoff. The adapter
 
 The polling delay is calculated as: `min(poll_max_delay, poll_interval * (poll_factor ^ attempt))`
 
+Only an explicit `SUCCESS` completes an async statement. Missing status and recognized transient
+polling errors are retried for the same task. The client polling deadline is the greater of
+30 minutes and `async_query_timeout` plus 60 seconds. An unresolved task may still run on StarRocks.
+
+For same-pod retries, set `DBT_STARROCKS_PENDING_TASK_DIR` to an existing, invocation-group-specific
+directory shared by both dbt commands. The adapter records a file named for each task before
+submitting it and removes the file after observing `SUCCESS` or `FAILED` for that ETL task. MV-only
+states `MERGED` and `SKIPPED` leave the file in place. Retry only when the
+directory is empty and the initial command produced retryable run results. These files remain
+local to the pod. Use the logged task IDs to reconcile work after pod termination.
+
+Scheduled dbt wrappers can provide a fresh `DBT_STARROCKS_WRITE_EVIDENCE_DIR`.
+The connection manager records a possible write before sending SQL outside the
+two exact startup metadata queries, including its direct database creation
+fallback. A catalog planner error has a separate marker. Unfamiliar SQL is
+treated conservatively.
+
 | Option         | Description                              | Default |
 |----------------|------------------------------------------|---------|
 | poll_interval  | Base delay in seconds between polls      | `1`     |

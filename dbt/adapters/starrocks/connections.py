@@ -14,6 +14,9 @@
 # limitations under the License.
 
 from contextlib import contextmanager
+import os
+import re
+from pathlib import Path
 
 import mysql.connector
 from mysql.connector.constants import FieldType
@@ -32,6 +35,27 @@ from dbt.adapters.events.logging import AdapterLogger
 from typing import Optional, Union
 
 logger = AdapterLogger("starrocks")
+
+_DBT_SQL_COMMENT = re.compile(r"^\s*/\*\s*\{[^*]*\}\s*\*/")
+_LIST_SCHEMAS = "select distinct schema_name from information_schema.schemata"
+# A narrow allowlist for dbt startup. Changes to the metadata macro fail closed.
+_LIST_RELATIONS = re.compile(
+    r"""select null as "database", tbl.table_name as name, tbl.table_schema as "schema", """
+    r"""case when tbl.table_type = 'BASE TABLE' or tbl.table_type = 'TABLE' then 'table' """
+    r"""when tbl.table_type = 'VIEW' and mv.table_name is null then 'view' """
+    r"""when tbl.table_type = 'VIEW' and mv.table_name is not null then 'materialized_view' """
+    r"""when tbl.table_type = 'SYSTEM VIEW' then 'system_view' else 'unknown' end as table_type """
+    r"""from information_schema.tables tbl left join default_catalog.information_schema.materialized_views mv """
+    r"""on tbl.TABLE_SCHEMA = mv.TABLE_SCHEMA and tbl.TABLE_NAME = mv.TABLE_NAME """
+    r"""where tbl.table_schema = '[a-z0-9_]+'""",
+    re.IGNORECASE,
+)
+
+
+def _write_evidence(name):
+    directory = os.environ.get("DBT_STARROCKS_WRITE_EVIDENCE_DIR")
+    if directory:
+        (Path(directory) / name).touch()
 
 
 @dataclass
@@ -190,6 +214,7 @@ class StarRocksConnectionManager(SQLConnectionManager):
 
                 mycursor = connection.handle.cursor()
 
+                _write_evidence("write-possible")
                 mycursor.execute("CREATE DATABASE " + database_toBeCreated)
                 kwargs["database"] = database_toBeCreated
 
@@ -227,6 +252,22 @@ class StarRocksConnectionManager(SQLConnectionManager):
                 logger.debug("Config version '{}' is invalid".format(version))
 
         return connection
+
+    def add_query(self, sql, *args, **kwargs):
+        if not os.environ.get("DBT_STARROCKS_WRITE_EVIDENCE_DIR"):
+            return super().add_query(sql, *args, **kwargs)
+
+        statement = " ".join(_DBT_SQL_COMMENT.sub("", sql, count=1).split())
+        list_relations = _LIST_RELATIONS.fullmatch(statement)
+        if not list_relations and statement.lower() != _LIST_SCHEMAS:
+            # Latch before sending any statement outside the exact startup allowlist.
+            _write_evidence("write-possible")
+        try:
+            return super().add_query(sql, *args, **kwargs)
+        except dbt_common.exceptions.DbtDatabaseError as exc:
+            if list_relations and "planner use long time" in str(exc).lower():
+                _write_evidence("catalog-planner-failed")
+            raise
 
     @classmethod
     def get_credentials(cls, credentials):
